@@ -1,1 +1,1 @@
-# waec_bot
+# HIZQEEL_TUTOR_BOT
