@@ -1,19 +1,18 @@
 import json
 import random
 import time
+import requests
 
 import streamlit as st
-from groq import Groq
 
 
 # =========================================================
 # APP SETTINGS
 # =========================================================
 
-APP_NAME = "WAEC Bot NG"
+APP_NAME = "HIZQEEL MULTI_TUTOR"
 
-# Current Groq model
-MODEL_NAME = "openai/gpt-oss-120b"
+BACKEND_URL = "http://127.0.0.1:8000"
 
 SUBJECTS = [
     "English Language",
@@ -140,23 +139,20 @@ for key, value in defaults.items():
 
 
 # =========================================================
-# GROQ API KEY
+# BACKEND CONNECTION
 # =========================================================
 
-try:
-    GROQ_API_KEY = st.secrets["GROQ_API_KEY"].strip()
-except Exception:
-    GROQ_API_KEY = ""
-
-
-client = None
-
-if GROQ_API_KEY:
+def backend_is_available():
     try:
-        client = Groq(api_key=GROQ_API_KEY)
-    except Exception as error:
-        st.error(f"Could not create Groq client: {error}")
-        client = None
+        response = requests.get(
+            f"{BACKEND_URL}/health",
+            timeout=5,
+        )
+
+        return response.status_code == 200
+
+    except requests.RequestException:
+        return False
 
 
 # =========================================================
@@ -185,6 +181,7 @@ def record_answer(correct):
     if correct:
         st.session_state.correct_answers += 1
         add_xp(10)
+
     else:
         add_xp(2)
 
@@ -197,100 +194,84 @@ def get_accuracy():
 
     return round(
         (st.session_state.correct_answers / total) * 100,
-        1
+        1,
     )
 
 
 # =========================================================
-# AI SYSTEM PROMPT
-# =========================================================
-
-SYSTEM_PROMPT = (
-    "You are WAEC Bot NG, a friendly Nigerian secondary "
-    "school education assistant. "
-
-    "Help students prepare for WAEC, NECO and JAMB. "
-
-    "Explain answers clearly and step by step. "
-
-    "Use Nigerian school terminology where appropriate. "
-
-    "Do not claim that generated questions are leaked "
-    "or real examination questions. "
-
-    "If a question is difficult, break it into simple steps. "
-
-    "For mathematics and science, show calculations. "
-
-    "For English, explain grammar and vocabulary clearly. "
-
-    "For essay questions, provide useful structure and examples. "
-
-    "Encourage learning rather than cheating."
-)
-
-
-# =========================================================
-# ASK AI
+# ASK AI THROUGH BACKEND
 # =========================================================
 
 def ask_ai(user_message):
 
-    if not GROQ_API_KEY:
-        return (
-            "⚠️ **Groq API key is not connected.**\n\n"
-            "Please add `GROQ_API_KEY` to your Streamlit Secrets."
-        )
-
-    if client is None:
-        return (
-            "⚠️ **Groq client could not be created.**\n\n"
-            "Please check your API key."
-        )
+    payload = {
+        "message": user_message,
+        "subject": get_selected_subject(),
+        "level": st.session_state.level,
+        "language": st.session_state.language,
+    }
 
     try:
 
-        messages = [
-            {
-                "role": "system",
-                "content": SYSTEM_PROMPT
-            }
-        ]
+        response = requests.post(
+            f"{BACKEND_URL}/api/tutor",
+            json=payload,
+            timeout=60,
+        )
 
-        for message in st.session_state.messages[-10:]:
-            messages.append(
-                {
-                    "role": message["role"],
-                    "content": message["content"]
-                }
+        if response.status_code != 200:
+
+            return (
+                "❌ **Backend error**\n\n"
+                f"HTTP status: `{response.status_code}`"
             )
 
-        messages.append(
-            {
-                "role": "user",
-                "content": user_message
-            }
+        data = response.json()
+
+        if data.get("success"):
+
+            return data.get(
+                "answer",
+                "The AI returned an empty answer.",
+            )
+
+        error_message = data.get(
+            "error",
+            "Unknown backend error.",
         )
 
-        response = client.chat.completions.create(
-            model=MODEL_NAME,
-            messages=messages,
-            temperature=0.4,
-            max_tokens=1800,
+        return (
+            "❌ **AI error**\n\n"
+            f"`{error_message}`"
         )
 
-        return response.choices[0].message.content
+    except requests.exceptions.ConnectionError:
+
+        return (
+            "❌ **Backend is not running.**\n\n"
+            "Please start the FastAPI backend with:\n\n"
+            "```powershell\n"
+            "uvicorn backend.main:app --reload\n"
+            "```"
+        )
+
+    except requests.exceptions.Timeout:
+
+        return (
+            "⏳ **The AI took too long to respond.**\n\n"
+            "Please try again."
+        )
 
     except Exception as error:
 
         return (
-            "❌ **Groq API error**\n\n"
+            "❌ **Connection error**\n\n"
             f"`{type(error).__name__}: {error}`"
         )
 
 
 # =========================================================
-# GENERATE QUESTIONS
+# GENERATE QUESTIONS THROUGH BACKEND
 # =========================================================
 
 def generate_questions(count=5):
@@ -298,97 +279,122 @@ def generate_questions(count=5):
     subject = get_selected_subject()
     level = st.session_state.level
 
-    if not GROQ_API_KEY:
-        st.error(
-            "❌ GROQ_API_KEY was not found in Streamlit Secrets."
-        )
-        return []
+    prompt = f"""
+Create {count} multiple-choice practice questions
+for {subject} at {level} level.
 
-    if client is None:
-        st.error(
-            "❌ Groq client could not be created."
-        )
-        return []
+Return ONLY valid JSON.
 
-    prompt = (
-        f"Create {count} multiple-choice practice questions "
-        f"for {subject} at {level} level.\n\n"
+Use exactly this structure:
 
-        "Return ONLY valid JSON.\n\n"
+[
+  {{
+    "question": "Question here",
+    "options": [
+      "Option A",
+      "Option B",
+      "Option C",
+      "Option D"
+    ],
+    "answer": "The exact correct option",
+    "explanation": "Short explanation"
+  }}
+]
 
-        "Use exactly this structure:\n"
+Rules:
 
-        "[\n"
-        "  {\n"
-        '    "question": "Question here",\n'
-        '    "options": [\n'
-        '      "Option A",\n'
-        '      "Option B",\n'
-        '      "Option C",\n'
-        '      "Option D"\n'
-        "    ],\n"
-        '    "answer": "The exact correct option",\n'
-        '    "explanation": "Short explanation"\n'
-        "  }\n"
-        "]\n\n"
+- Exactly {count} questions.
+- Exactly four options per question.
+- Exactly one correct answer.
+- The answer must exactly match one option.
+- No markdown.
+- Do not use ```json.
+- Return JSON only.
+"""
 
-        "Rules:\n"
-        "- Exactly four options per question.\n"
-        "- Exactly one correct answer.\n"
-        "- The answer must exactly match one option.\n"
-        "- No markdown.\n"
-        "- Do not use ```json.\n"
-        "- Return JSON only."
-    )
+    payload = {
+        "message": prompt,
+        "subject": subject,
+        "level": level,
+        "language": st.session_state.language,
+    }
 
     try:
 
-        response = client.chat.completions.create(
-            model=MODEL_NAME,
-
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a WAEC question generator. "
-                        "Return valid JSON only."
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": prompt,
-                },
-            ],
-
-            temperature=0.5,
-            max_tokens=3000,
+        response = requests.post(
+            f"{BACKEND_URL}/api/tutor",
+            json=payload,
+            timeout=120,
         )
 
-        raw = response.choices[0].message.content
+        if response.status_code != 200:
+
+            st.error(
+                f"❌ Backend returned HTTP {response.status_code}."
+            )
+
+            return []
+
+        result = response.json()
+
+        if not result.get("success"):
+
+            st.error(
+                "❌ Backend AI error:"
+            )
+
+            st.code(
+                result.get(
+                    "error",
+                    "Unknown error.",
+                )
+            )
+
+            return []
+
+        raw = result.get("answer", "")
 
         if not raw:
+
             st.error(
-                "❌ Groq returned an empty response."
+                "❌ The backend returned an empty response."
             )
+
             return []
 
         raw = raw.strip()
 
-        with st.expander("🔧 Developer Debug"):
-            st.code(raw)
-
-        # Remove markdown code fences if the AI accidentally adds them
+        # Remove markdown code fences if necessary
         if raw.startswith("```"):
-            raw = raw.replace("```json", "")
-            raw = raw.replace("```", "")
+
+            raw = raw.replace(
+                "```json",
+                "",
+            )
+
+            raw = raw.replace(
+                "```",
+                "",
+            )
+
             raw = raw.strip()
+
+        # Try to locate JSON array if the AI added extra text
+        if "[" in raw and "]" in raw:
+
+            start = raw.find("[")
+            end = raw.rfind("]") + 1
+
+            raw = raw[start:end]
 
         data = json.loads(raw)
 
         if not isinstance(data, list):
+
             st.error(
-                "❌ Groq returned JSON, but it was not a list."
+                "❌ The AI response was not a question list."
             )
+
             return []
 
         cleaned = []
@@ -403,7 +409,7 @@ def generate_questions(count=5):
             answer = item.get("answer")
             explanation = item.get(
                 "explanation",
-                ""
+                "",
             )
 
             if not question:
@@ -431,9 +437,11 @@ def generate_questions(count=5):
             )
 
         if not cleaned:
+
             st.error(
-                "❌ Groq responded, but none of the questions passed validation."
+                "❌ None of the generated questions passed validation."
             )
+
             return []
 
         return cleaned
@@ -441,11 +449,35 @@ def generate_questions(count=5):
     except json.JSONDecodeError as error:
 
         st.error(
-            "❌ Groq returned invalid JSON."
+            "❌ The AI returned invalid JSON."
         )
 
         st.code(
             f"JSON error: {error}"
+        )
+
+        with st.expander("🔧 Developer Debug"):
+
+            st.code(raw)
+
+        return []
+
+    except requests.exceptions.ConnectionError:
+
+        st.error(
+            "❌ Backend is not running."
+        )
+
+        st.code(
+            "uvicorn backend.main:app --reload"
+        )
+
+        return []
+
+    except requests.exceptions.Timeout:
+
+        st.error(
+            "⏳ Question generation timed out."
         )
 
         return []
@@ -453,7 +485,7 @@ def generate_questions(count=5):
     except Exception as error:
 
         st.error(
-            "❌ Groq API error:"
+            "❌ Question generation error."
         )
 
         st.code(
@@ -469,7 +501,9 @@ def generate_questions(count=5):
 
 with st.sidebar:
 
-    st.markdown("## 🎓 WAEC Bot NG")
+    st.markdown(
+        "## 🎓 HIZQEEL MULTI_TUTOR"
+    )
 
     mode_options = [
         "AI Tutor",
@@ -531,17 +565,23 @@ with st.sidebar:
 
     st.write(
         "Questions answered: "
-        + str(st.session_state.questions_answered)
+        + str(
+            st.session_state.questions_answered
+        )
     )
 
     st.write(
         "Correct answers: "
-        + str(st.session_state.correct_answers)
+        + str(
+            st.session_state.correct_answers
+        )
     )
 
     st.write(
         "Accuracy: "
-        + str(get_accuracy())
+        + str(
+            get_accuracy()
+        )
         + "%"
     )
 
@@ -549,20 +589,30 @@ with st.sidebar:
 
     if st.button(
         "🔄 Reset Progress",
-        use_container_width=True
+        use_container_width=True,
     ):
 
         st.session_state.xp = 0
+
         st.session_state.questions_answered = 0
+
         st.session_state.correct_answers = 0
 
         st.session_state.quiz_questions = []
+
         st.session_state.quiz_index = 0
+
         st.session_state.quiz_score = 0
 
         st.session_state.exam_questions = []
+
         st.session_state.exam_index = 0
+
         st.session_state.exam_score = 0
+
+        st.session_state.exam_started = False
+
+        st.session_state.exam_start_time = 0.0
 
         st.session_state.messages = []
 
@@ -576,7 +626,7 @@ with st.sidebar:
 st.markdown(
     """
     <div class='hero'>
-        <h1>🎓 WAEC Bot NG</h1>
+        <h1>🎓 HIZQEEL MULTI_TUTOR</h1>
         <p>
             Your AI-powered study assistant for WAEC,
             NECO and JAMB.
@@ -588,27 +638,50 @@ st.markdown(
 
 
 # =========================================================
+# BACKEND STATUS
+# =========================================================
+
+if backend_is_available():
+
+    st.success(
+        "🟢 AI Backend Connected",
+        icon="✅",
+    )
+
+else:
+
+    st.warning(
+        "🟠 AI Backend is not running. "
+        "Start FastAPI with "
+        "`uvicorn backend.main:app --reload`."
+    )
+
+
+# =========================================================
 # DASHBOARD METRICS
 # =========================================================
 
 col1, col2, col3 = st.columns(3)
 
 with col1:
+
     st.metric(
         "⭐ XP",
-        st.session_state.xp
+        st.session_state.xp,
     )
 
 with col2:
+
     st.metric(
         "✅ Correct",
-        st.session_state.correct_answers
+        st.session_state.correct_answers,
     )
 
 with col3:
+
     st.metric(
         "📊 Accuracy",
-        f"{get_accuracy()}%"
+        f"{get_accuracy()}%",
     )
 
 
@@ -631,12 +704,9 @@ if st.session_state.mode == "AI Tutor":
         f"Level: **{st.session_state.level}**"
     )
 
-    if not GROQ_API_KEY:
-
-        st.warning(
-            "⚠️ Groq is not connected. "
-            "Add GROQ_API_KEY to Streamlit Secrets."
-        )
+    st.write(
+        f"Language: **{st.session_state.language}**"
+    )
 
     for message in st.session_state.messages:
 
@@ -657,12 +727,15 @@ if st.session_state.mode == "AI Tutor":
         st.session_state.messages.append(
             {
                 "role": "user",
-                "content": user_input
+                "content": user_input,
             }
         )
 
         with st.chat_message("user"):
-            st.markdown(user_input)
+
+            st.markdown(
+                user_input
+            )
 
         with st.chat_message("assistant"):
 
@@ -674,12 +747,14 @@ if st.session_state.mode == "AI Tutor":
                     user_input
                 )
 
-            st.markdown(answer)
+            st.markdown(
+                answer
+            )
 
         st.session_state.messages.append(
             {
                 "role": "assistant",
-                "content": answer
+                "content": answer,
             }
         )
 
@@ -701,14 +776,14 @@ elif st.session_state.mode == "Teach Me":
         options=[
             "Beginner",
             "Intermediate",
-            "Advanced"
+            "Advanced",
         ],
         value="Intermediate",
     )
 
     if st.button(
         "📖 Teach Me",
-        use_container_width=True
+        use_container_width=True,
     ):
 
         if not topic.strip():
@@ -723,9 +798,7 @@ elif st.session_state.mode == "Teach Me":
                 f"Teach me the topic '{topic}' "
                 f"for {get_selected_subject()} "
                 f"at {st.session_state.level} level. "
-
                 f"Difficulty: {difficulty}. "
-
                 "Explain it step by step using simple language. "
                 "Include examples and finish with three short questions."
             )
@@ -734,14 +807,18 @@ elif st.session_state.mode == "Teach Me":
                 "Preparing your lesson..."
             ):
 
-                answer = ask_ai(prompt)
+                answer = ask_ai(
+                    prompt
+                )
 
             st.markdown(
                 "<div class='card'>",
                 unsafe_allow_html=True,
             )
 
-            st.markdown(answer)
+            st.markdown(
+                answer
+            )
 
             st.markdown(
                 "</div>",
@@ -775,7 +852,7 @@ elif st.session_state.mode == "Practice Quiz":
 
         if st.button(
             "🚀 Start Quiz",
-            use_container_width=True
+            use_container_width=True,
         ):
 
             with st.spinner(
@@ -793,7 +870,9 @@ elif st.session_state.mode == "Practice Quiz":
                 )
 
                 st.session_state.quiz_questions = questions
+
                 st.session_state.quiz_index = 0
+
                 st.session_state.quiz_score = 0
 
                 st.rerun()
@@ -807,6 +886,7 @@ elif st.session_state.mode == "Practice Quiz":
     else:
 
         questions = st.session_state.quiz_questions
+
         index = st.session_state.quiz_index
 
         if index < len(questions):
@@ -834,7 +914,7 @@ elif st.session_state.mode == "Practice Quiz":
 
             if st.button(
                 "Submit Answer",
-                use_container_width=True
+                use_container_width=True,
             ):
 
                 correct = (
@@ -878,11 +958,12 @@ elif st.session_state.mode == "Practice Quiz":
         else:
 
             score = st.session_state.quiz_score
+
             total = len(questions)
 
             percentage = round(
                 (score / total) * 100,
-                1
+                1,
             )
 
             st.success(
@@ -891,7 +972,7 @@ elif st.session_state.mode == "Practice Quiz":
 
             st.metric(
                 "Your Score",
-                f"{score}/{total}"
+                f"{score}/{total}",
             )
 
             st.write(
@@ -920,11 +1001,13 @@ elif st.session_state.mode == "Practice Quiz":
 
             if st.button(
                 "🔄 New Quiz",
-                use_container_width=True
+                use_container_width=True,
             ):
 
                 st.session_state.quiz_questions = []
+
                 st.session_state.quiz_index = 0
+
                 st.session_state.quiz_score = 0
 
                 st.rerun()
@@ -953,7 +1036,7 @@ elif st.session_state.mode == "Mock Exam":
 
         if st.button(
             "🚀 Start Mock Exam",
-            use_container_width=True
+            use_container_width=True,
         ):
 
             with st.spinner(
@@ -971,9 +1054,13 @@ elif st.session_state.mode == "Mock Exam":
                 )
 
                 st.session_state.exam_questions = questions
+
                 st.session_state.exam_index = 0
+
                 st.session_state.exam_score = 0
+
                 st.session_state.exam_started = True
+
                 st.session_state.exam_start_time = time.time()
 
                 st.rerun()
@@ -987,6 +1074,7 @@ elif st.session_state.mode == "Mock Exam":
     else:
 
         questions = st.session_state.exam_questions
+
         index = st.session_state.exam_index
 
         if index < len(questions):
@@ -1003,10 +1091,11 @@ elif st.session_state.mode == "Mock Exam":
             remaining = max(
                 0,
                 total_seconds
-                - int(elapsed)
+                - int(elapsed),
             )
 
             minutes = remaining // 60
+
             seconds = remaining % 60
 
             st.info(
@@ -1037,7 +1126,7 @@ elif st.session_state.mode == "Mock Exam":
 
             if st.button(
                 "Next Question",
-                use_container_width=True
+                use_container_width=True,
             ):
 
                 correct = (
@@ -1068,11 +1157,12 @@ elif st.session_state.mode == "Mock Exam":
         else:
 
             score = st.session_state.exam_score
+
             total = len(questions)
 
             percentage = round(
                 (score / total) * 100,
-                1
+                1,
             )
 
             st.success(
@@ -1081,12 +1171,12 @@ elif st.session_state.mode == "Mock Exam":
 
             st.metric(
                 "Final Score",
-                f"{score}/{total}"
+                f"{score}/{total}",
             )
 
             st.metric(
                 "Percentage",
-                f"{percentage}%"
+                f"{percentage}%",
             )
 
             if percentage >= 75:
@@ -1113,13 +1203,17 @@ elif st.session_state.mode == "Mock Exam":
 
             if st.button(
                 "🔄 Take Another Exam",
-                use_container_width=True
+                use_container_width=True,
             ):
 
                 st.session_state.exam_questions = []
+
                 st.session_state.exam_index = 0
+
                 st.session_state.exam_score = 0
+
                 st.session_state.exam_started = False
+
                 st.session_state.exam_start_time = 0.0
 
                 st.rerun()
@@ -1134,7 +1228,7 @@ st.markdown("---")
 st.markdown(
     """
     <div style='text-align:center;color:#9ca3af;'>
-        🎓 WAEC Bot NG • Built for Nigerian Students
+        🎓 HIZQEEL MULTI_TUTOR • Built for Nigerian Students
         <br>
         Study smart. Practise more. Succeed.
     </div>
