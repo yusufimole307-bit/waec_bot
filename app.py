@@ -10,33 +10,32 @@ from groq import Groq
 # ============================================================
 # WAEC BOT NG — PROFESSIONAL EDITION
 # ============================================================
-# Features:
+# AI-powered learning platform
+#
+# FEATURES
 # - AI Tutor
-# - Teach Me mode
-# - Hint mode
+# - Teach Me
+# - Hint Mode
 # - Practice Quiz
-# - Mock Examination
-# - XP and levels
+# - Mock Exam
+# - XP / Levels
 # - Accuracy tracking
 # - Study streak
 # - Multiple subjects
 # - Multiple languages
-# - Mobile-friendly interface
+# - Professional responsive UI
 #
 # PAYMENT SYSTEM: NOT INCLUDED
-#
-# Add your API key to Streamlit Secrets:
-#
-# GROQ_API_KEY = "your_groq_api_key_here"
 # ============================================================
 
 
 # ============================================================
-# APP CONFIGURATION
+# CONFIGURATION
 # ============================================================
 
 APP_NAME = "WAEC Bot NG"
 MODEL_NAME = "llama-3.3-70b-versatile"
+
 
 st.set_page_config(
     page_title=f"{APP_NAME} | AI Study Platform",
@@ -47,7 +46,7 @@ st.set_page_config(
 
 
 # ============================================================
-# PROFESSIONAL CSS
+# PROFESSIONAL UI
 # ============================================================
 
 st.markdown(
@@ -224,7 +223,7 @@ SUBJECTS = [
 
 
 # ============================================================
-# LEVELS
+# ACADEMIC LEVELS
 # ============================================================
 
 LEVELS = [
@@ -262,7 +261,7 @@ LANGUAGES = [
 
 
 # ============================================================
-# MODES
+# LEARNING MODES
 # ============================================================
 
 MODES = [
@@ -323,7 +322,6 @@ def initialize_session():
         "exam_started": None,
 
         "last_request": 0.0,
-
     }
 
     for key, value in defaults.items():
@@ -337,20 +335,25 @@ initialize_session()
 
 
 # ============================================================
-# GROQ CLIENT
+# GROQ CONNECTION
 # ============================================================
 
 def get_groq_client():
 
     try:
 
-        api_key = st.secrets.get("GROQ_API_KEY", "")
+        api_key = st.secrets.get(
+            "GROQ_API_KEY",
+            ""
+        )
 
         if not api_key:
 
             return None
 
-        return Groq(api_key=api_key)
+        return Groq(
+            api_key=api_key
+        )
 
     except Exception:
 
@@ -361,18 +364,20 @@ client = get_groq_client()
 
 
 # ============================================================
-# SUBJECT HELPER
+# CURRENT SUBJECT
 # ============================================================
 
 def get_current_subject():
 
     if st.session_state.subject == "Custom Subject":
 
-        custom = st.session_state.custom_subject.strip()
+        custom_subject = (
+            st.session_state.custom_subject.strip()
+        )
 
-        if custom:
+        if custom_subject:
 
-            return custom
+            return custom_subject
 
         return "General Knowledge"
 
@@ -380,19 +385,24 @@ def get_current_subject():
 
 
 # ============================================================
-# XP
+# XP SYSTEM
 # ============================================================
 
 def add_xp(amount):
 
-    amount = max(0, int(amount))
+    amount = max(
+        0,
+        int(amount)
+    )
 
     st.session_state.xp += amount
 
 
 def get_level():
 
-    return (st.session_state.xp // 100) + 1
+    return (
+        st.session_state.xp // 100
+    ) + 1
 
 
 # ============================================================
@@ -401,7 +411,9 @@ def get_level():
 
 def get_accuracy():
 
-    total = st.session_state.questions_answered
+    total = (
+        st.session_state.questions_answered
+    )
 
     if total <= 0:
 
@@ -414,14 +426,18 @@ def get_accuracy():
 
 
 # ============================================================
-# RATE LIMIT
+# SIMPLE REQUEST PROTECTION
 # ============================================================
 
 def request_allowed():
 
     now = time.time()
 
-    if now - st.session_state.last_request < 1.2:
+    last_request = (
+        st.session_state.last_request
+    )
+
+    if now - last_request < 1.2:
 
         return False
 
@@ -431,10 +447,14 @@ def request_allowed():
 
 
 # ============================================================
-# CLEAN JSON
+# CLEAN AI JSON
 # ============================================================
 
 def clean_json(text):
+
+    if not text:
+
+        return ""
 
     text = text.strip()
 
@@ -492,19 +512,23 @@ Your responsibilities:
 5. For mathematics and science calculations,
    show formulas and working.
 6. Correct mistakes politely.
-7. Encourage students without giving false promises.
+7. Encourage students without making false promises.
 8. Never fabricate official WAEC results.
 9. Never claim an AI-generated question is an
-   authentic WAEC or NECO past question.
-10. If a question is AI-generated, label it as
-    practice or WAEC-style practice when appropriate.
-11. Do not invent sources.
+   authentic WAEC, NECO or JAMB past question.
+10. Clearly label generated questions as practice
+    or WAEC-style practice when appropriate.
+11. Never invent sources.
 12. Keep answers organized and easy to read.
+13. If the student asks something outside the
+    selected subject, still help if appropriate.
+14. Prioritize educational value over unnecessary
+    verbosity.
 """
 
 
 # ============================================================
-# AI REQUEST
+# ASK AI
 # ============================================================
 
 def ask_ai(
@@ -519,13 +543,10 @@ def ask_ai(
         return """
 ⚠️ **AI service is not connected yet.**
 
-The app owner needs to add:
+The app owner needs to add the Groq API key to
+Streamlit Secrets.
 
-`GROQ_API_KEY`
-
-to Streamlit Secrets.
-
-Example:
+Use:
 
 ```toml
 GROQ_API_KEY = "your_api_key_here"
