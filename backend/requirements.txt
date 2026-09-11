@@ -1,4 +1,5 @@
 fastapi
 uvicorn
-setuptools
-wheel
+groq
+requests
+python-dotenv
